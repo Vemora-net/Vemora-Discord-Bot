@@ -8,7 +8,7 @@ const http = require("http");
 var server = http.createServer().listen(2321);
 const io = require("socket.io")(server);
 
-const {guildid, user_role, token, server_banner_role_2, server_banner_role_1, welcome_id, bye_id, mongourl, joins_speak, online_speak, member_speak, messages_speak} = require("./config");
+const {guildid, verified, user_role, token, server_banner_role_2, server_banner_role_1, welcome_id, bye_id, mongourl, joins_speak, online_speak, member_speak, messages_speak, game_category} = require("./config");
 var guild, welcome_channel, bye_channel, db_discord, dbo;
 var joins = 0;
 var messages = 0;
@@ -56,8 +56,38 @@ client.on("ready", () =>{
     }, 3000);
 
     io.on('connection', (socket) => {
-        socket.on('move', (user, channel) =>{
+        console.log("[Socket] Connected with Server");
+        socket.on('move', (user, channel) => {
+            var ch = guild.channels.find(val => val.id === channel);
+            var us = guild.members.find(val => val.id === user);
+            if(us){
+                if(ch){
+                    if(us.voiceChannel){
+                        if(us.voiceChannel.id !== ch.id){
+                            if(ch.permissionsFor(us).has("CONNECT")) {
+                                us.setVoiceChannel(ch).then(() => {
+                                    socket.send("[Moved] " + ch.name);
+                                });
+                            }else{
+                                socket.send("[No perms]");
+                            }
+                        }else{
+                            socket.send("[Already]");
+                        }
+                    }else{
+                        socket.send("[No connection]");
+                    }
+                }else{
+                    socket.send("[Not found]");
+                }
+            }else{
+                socket.send("[Player not found]");
+            }
+        });
 
+        socket.on('create', (name, user) => {
+           var gu =  guild.members.find(val => val.id === user);
+            guild.createChannel(name, {type: "voice", parent: game_category}).then(cha => { socket.send("[ID] " + cha.id); cha.replacePermissionOverwrites({overwrites: [{id: gu.id, allow: ['CONNECT'],},{id: '648984625917460491', type: 'member', denied: ['CONNECT']},], reason: 'User permission'})});
         });
 
         socket.on('chat', (user, message) =>{
@@ -67,12 +97,30 @@ client.on("ready", () =>{
                 socket.send(true);
             }
         });
+        socket.on('link', (user, name) =>{
+            var auser = guild.members.find(val => val.id === user);
+            if(auser){
+                auser.addRole(verified);
+                auser.send("Du hast dich erfolgreich mit "  + name + " verbunden!")
+            }
+        });
+
+        socket.on('unlink', (user) =>{
+            var auser = guild.members.find(val => val.id === user);
+            if(auser){
+                auser.removeRole(verified);
+                auser.send("Du hast deinen Minecraft-Account getrennt!");
+            }
+        });
     });
 
 });
 
 client.on("presenceUpdate", (o, n) =>{
     guild.channels.find(val => val.id === online_speak).setName("Online: " + findOnlineMembers().length + "");
+});
+client.on("channelUpdate", (oc, nc) =>{
+   // console.log(nc.permissionOverwrites);
 });
 
 client.on("message", (msg) =>{
@@ -81,7 +129,17 @@ client.on("message", (msg) =>{
     }
     messages++;
     db_discord.collection("stats").updateOne({guildid: guildid}, {$inc: {messages : +1}}, {upsert: true}, (err, res) =>{});
-    guild.channels.find(val => val.id === messages_speak).setName("Messages: " + messages + "");
+    if(msg.cleanContent.startsWith("!")){
+        var args = msg.cleanContent.slice(1).split(" ");
+        msg.delete(1);
+        if(args[0] === "connect"){
+            var rand = randomString(6);
+            msg.author.send("Use /connect " + rand);
+            db_discord.collection("connect").insertOne({userid: rand, discord: msg.author.id}, (err, res)=>{});
+
+        }
+
+    }else{guild.channels.find(val => val.id === messages_speak).setName("Messages: " + messages + "");}
 });
 
 client.on("guildMemberAdd", (member) =>{
@@ -132,12 +190,22 @@ function hasRole(role, member){
 }
 function connectDB() {
     MongoClient.connect(mongourl, (err, db) => {
+
+        if(err) throw err;
         dbo = db;
         db_discord = dbo.db("discord");
         console.log("Logged in to MongoDB!");
     });
 }
-
+function randomString(length) {
+    var result           = '';
+    var characters       = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    var charactersLength = characters.length;
+    for ( var i = 0; i < length; i++ ) {
+        result += characters.charAt(Math.floor(Math.random() * charactersLength));
+    }
+    return result;
+}
 client.login(token);
 
 
